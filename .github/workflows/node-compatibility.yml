@@ -1,0 +1,45 @@
+name: Node compatibility
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+concurrency:
+  group: node-compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.4'
+      - name: Verify patched runtime
+        run: node -e "require('node:assert/strict').equal(process.version, 'v22.23.4')"
+      - name: Clean frozen installation
+        run: npm ci
+      - name: Existing legend validation
+        run: npm run validate
+      - name: Source regression tests
+        run: node --experimental-strip-types --test test/sanitize.test.mjs
+      - name: Rebuild application (do not reuse checked-in dist)
+        run: |
+          rm -rf dist
+          npm run build
+      - name: Built application and MCP stdio integration tests
+        run: node --test test/runtime.test.mjs
+      - name: Build patched container from freshly compiled output
+        run: docker build --tag legends-node-compatibility .
+      - name: Container runtime and bundled-data smoke
+        run: >-
+          docker run --rm --entrypoint node legends-node-compatibility
+          --input-type=module -e
+          "import assert from 'node:assert/strict';
+          import { loadLegends } from './dist/legends/loader.js';
+          assert.equal(process.version, 'v22.23.4');
+          assert.ok(loadLegends().has('warren-buffett'));"
